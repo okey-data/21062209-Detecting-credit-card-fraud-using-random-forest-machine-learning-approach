@@ -1,0 +1,504 @@
+---
+title: "Detecting credit card fraud using random forest machine learning approach"
+author: "Chukwuemerie Okechukwu Okoli"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#LIBRARY
+#--------------------------
+
+#This are the libraries to run the research project.
+#The library that are not installed on the R program, we use
+#the install.packages(name) to install it.
+#--------------------------------------------------
+
+
+
+```{r}
+library(dplyr) # for data manipulation
+library(stringr) # for data manipulation
+library(caret) # for sampling
+library(caTools) # for train/test split
+library(ggplot2) # for data visualization
+library(corrplot) # for correlations
+library(Rtsne) # for tsne plotting
+library(ROSE)# for ROSE sampling
+library(rpart)
+install.packages("remotes")
+remotes::install_github("cran/DMwR") # for SMOTE FUNCTION
+library(Rborist)# for random forest model
+library(xgboost) # for xgboost model
+library("randomForest")
+
+```
+#SETTING THE PLOT
+#________________________
+
+# The code below enable us to
+# to set plot height and width
+
+```{r}
+fig <- function(width, heigth){
+  options(repr.plot.width = width, repr.plot.height = heigth)
+}
+```
+
+#DATA PREPARATION
+#___________________
+
+#before we start our , we need to load the dataset
+# to our system. The Dataset for this research is the Credit
+#card dataset
+# loading the data
+
+```{r}
+creditcard = read.csv('creditcard.csv')
+```
+
+#DATA EXPLORATION
+#---------------------------
+
+#We start with exploring the data
+
+```{r}
+head(creditcard)
+```
+
+# we need to see how the dataset is structured
+
+```{r}
+str(creditcard)
+```
+
+#We need to see the summary description of the dataset
+
+```{r}
+summary(creditcard)
+```
+#We need to check if the dataset has a missing value in any
+#of the variables
+# checking missing values
+
+#_________________________________________
+#Fortunately for us the output shows that the dataset has
+# no missing values in any of the variables
+#The next step is to check if the dataset is balance
+
+```{r}
+colSums(is.na(creditcard))
+```
+#CHECKING THE IMBALANCE DATASET
+#____________________________________
+
+# checking class imbalance
+
+```{r}
+table(creditcard$Class)
+```
+
+# class imbalance in percentage
+
+#___________________________________
+#Looking at the output for the code above, we can see that
+#the dataset is highly imbalance with 284315 non fraud
+#transactions and 492 fraud transactions which gives a 
+# percentage of 99% for non fraud and 1% for fraud transactions
+#and this will surely lead
+# to biased prediction using the Random forest algorithm
+#We need to look for a way to balance the dataset.
+
+```{r}
+prop.table(table(creditcard$Class))
+```
+
+#GRAPH VISUALIZATION
+#_________________________
+
+#---------------------------
+#We have to still look at the dataset in a visual form
+#The ggplot library is used to show the graphical representation
+# of how the class are categorized
+
+
+#_____________________________________________
+
+#The graph below  clearly shows
+# that the dataset is highly imbalanced
+# A simple measure like accuracy is not appropriate here 
+#as even a classifier which labels all transactions 
+#as non-fraudulent will have over 99% accuracy. 
+#An appropriate measure of model performance
+#here would be AUC (Area Under the Precision-Recall Curve)
+
+#---------------------------------------------------
+
+```{r}
+fig(12, 8)
+common_theme <- theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+ggplot(data = creditcard, aes(x = factor(Class), 
+                      y = prop.table(stat(count)), fill = factor(Class),
+                      label = scales::percent(prop.table(stat(count))))) +
+  geom_bar(position = "dodge") + 
+  geom_text(stat = 'count',
+            position = position_dodge(.9), 
+            vjust = -0.5, 
+            size = 3) + 
+  scale_x_discrete(labels = c("no fraud", "fraud"))+
+  scale_y_continuous(labels = scales::percent)+
+  labs(x = 'Class', y = 'Percentage') +
+  ggtitle("Distribution of class labels") +
+  common_theme
+```
+
+
+
+#DATA VISUALIZATION FOR DEPENDENT VARIABLE BY INDEPENDENT VARIABLE
+#____________________________________________________________
+
+#We will look at more data visualization between the 
+#independent variable and the dependent variables
+#we need to see how their relationship
+
+#_____________________________________________________
+#Looking at the graph below
+# we can see that The ‘Time’ feature looks pretty 
+#similar across both types of transactions. 
+#One could argue that fraudulent transactions
+#are more uniformly distributed, 
+#while normal transactions have a cyclical distribution
+
+#____________________________________________________________
+
+
+```{r}
+
+fig(14, 8)
+creditcard %>%
+  ggplot(aes(x = Time, fill = factor(Class))) + geom_histogram(bins = 100)+
+  labs(x = 'Time in seconds since first transaction', y = 'No. of transactions') +
+  ggtitle('Distribution of time of transaction by class') +
+  facet_grid(Class ~ ., scales = 'free_y') + common_theme
+```
+
+
+
+#Lets look at the relationship between amount by Class
+
+#__________________________________________________
+
+#Looking at the graph for the relationship between
+#Amount by Class,there is clearly a lot more
+#variability in the transaction values for non-fraudulent
+#transactions.
+
+```{r}
+fig(14, 8)
+ggplot(creditcard, aes(x = factor(Class), y = Amount)) + geom_boxplot() + 
+  labs(x = 'Class', y = 'Amount') +
+  ggtitle("Distribution of transaction amount by class") + common_theme
+```
+
+#Lets us look at more of the variable relations between the class
+
+```{r}
+for(i in seq(from=1, to=28, by = 3))
+{
+  show(
+    featurePlot(
+    X <- creditcard[,c(i, i+1)],
+    Y <- as.factor(creditcard$Class),
+    plot = "density",
+    scales = list(x = list(relation="free"), y = list(relation="free")), 
+    adjust = 1.5, # Adjusts curve smoothness
+    pch =  c(1, 8, 15),    # Points charted at the bottom to depict density
+    layout = c(2,1 ),
+    auto.key=TRUE
+    ) # end of feature plot
+  ) # end of show
+} # end of for loop
+```
+
+#DATA CORRELATION
+#__________________________
+#______________________________________________
+#Lets see how the data are correlated
+#_____________________________
+
+#We observe that most of the data features are not correlated.
+#This is because before publishing, most of the features were
+#presented to a Principal Component Analysis (PCA) algorithm.
+#The features V1 to V28 are most probably the Principal
+#Components resulted after propagating the real features
+#through PCA. We do not know if the numbering of the
+#features reflects the importance of the Principal
+#Components.
+
+#_______________________________________________________
+
+
+
+```{r}
+fig(14, 8)
+correlations <- cor(creditcard[,-1],method="pearson")
+corrplot(correlations, number.cex = .9, method = "circle", type = "full", tl.cex=0.8,tl.col = "black")
+
+
+```
+
+
+#Let's visualize the dataset using the
+#T-Distributed Stochastic
+#we will try visualizing the data using
+#t-Distributed Stochastic Neighbour Embedding, 
+#a technique to reduce dimensionality.
+#To train the model, perplexity was set to 20.
+#The visualisation should give us a hint as to 
+#whether there exist any “discoverable” patterns 
+#in the data which the model could learn. If there 
+#is no obvious structure in the data, 
+#it is more likely that the model will perform poorly.
+
+#__________________________________________
+
+#Let's just try to see how we can balance the dataset
+#we will be using the different techniques
+#before we do that, let's reorganized the data preparation
+#Looking at the ‘Time’ feature,
+#it does not indicate the actual time 
+#of the transaction and is more of listing the 
+#data in chronological order. 
+#Based on the data visualization above,
+#we assume that ‘Time’ feature has little 
+#or no significance in correctly classifying
+#a fraud transaction and hence eliminate this
+#column from further analysis.
+
+```{r}
+
+fig(16, 10)
+# Use 10% of data to compute t-SNE
+tsne_subset <- 1:as.integer(0.1*nrow(creditcard))
+tsne <- Rtsne(creditcard[tsne_subset,-c(1, 31)], perplexity = 20, theta = 0.5, pca = F, verbose = F, max_iter = 500, check_duplicates = F)
+
+classes <- as.factor(creditcard$Class[tsne_subset])
+tsne_mat <- as.data.frame(tsne$Y)
+ggplot(tsne_mat, aes(x = V1, y = V2)) + geom_point(aes(color = classes)) + theme_minimal() + common_theme + ggtitle("t-SNE visualisation of transactions") + scale_color_manual(values = c("#E69F00", "#56B4E9"))
+
+```
+
+
+#PREPARING THE DATASET TO BE BALANCE FOR BETTER PREDICTION
+#________________________________________________
+
+#Remove 'Time' variable
+
+```{r}
+creditcard <- creditcard[,-1]
+#Change 'Class' variable to factor
+creditcard$Class <- as.factor(creditcard$Class)
+levels(creditcard$Class) <- c("Not_Fraud", "Fraud")
+```
+
+
+#Scale numeric variables
+
+```{r}
+creditcard[,-30] <- scale(creditcard[,-30])
+
+head(creditcard)
+```
+
+
+#We will split the data into training and testing data.
+#The Training test will have 70% of the data while the
+#test data will contain 30% of the data
+
+```{r}
+set.seed(123)
+split <- sample.split(creditcard$Class, SplitRatio = 0.7)
+train <-  subset(creditcard, split == TRUE)
+test <- subset(creditcard, split == FALSE)
+```
+
+
+
+
+#USING THE BALANCING TECHNIQUES
+#____________________________________
+
+
+
+
+
+#_________________________
+#From the training set, we have a total of 199020 non fraud
+#transactions and 344 fraud transactions
+
+
+```{r}
+table(train$Class)
+```
+
+#Applying the undersampling technique
+#________________________________
+
+
+#Using the Under Sampling Technique
+In order to balance the data set, this approach lowers the amount of observations from the majority class. When the data set is large and the number of training samples is decreased, run time and storage issues are improved. There are actually two types of undersampling techniques. They are the Random undersampling technique and the Informative undersampling technique.
+
+
+
+In the random undersampling method, observations from the majority class are selected at random and deleted until the data set is balanced.
+A predetermined selection criterion is used in conjunction with informative undersampling to eliminate data from the majority class.
+
+This method may have a flaw in that by deleting observations, the training data may lose crucial information about the majority class.
+
+```{r}
+set.seed(9560)
+down_train <- downSample(x = train[, -ncol(train)],
+                         y = train$Class)
+table(down_train$Class)
+```
+#Using the Over Sampling Technique
+
+Minority classes can use this strategy. To balance the data, it repeats the observations from the minority class. This method, like undersampling, can be broken down into two categories: random oversampling and informative oversampling.
+
+By oversampling the minority class at random, random oversampling balances the data. Informative oversampling creates minority class observations artificially using a predetermined criterion.
+
+Utilizing this strategy has the benefit of not causing information loss. The drawback of this approach is that because oversampling just duplicates the original data set's observations, it adds many observations of various types, which results in overfitting.
+
+Using the over sampling technique, we can see that we now have a balance dataset with a total of  199020 fraud transactions and 199020 fraud transactions
+
+
+```{r}
+set.seed(9560)
+up_train <- upSample(x = train[, -ncol(train)],
+                         y = train$Class)
+table(up_train$Class)
+```
+
+#Synthetic Data Generation (SMOTE and ROSE)
+#_____________________________________________
+In other words, it corrects imbalances by producing fake data, as opposed to duplicating and adding observations from the minority class. It also falls under the category of oversampling.
+
+Synthetic minority oversampling technique (SMOTE) is a potent and popular methodology for creating synthetic data. By selecting points that are on the line that connects the unusual observation to one of its closest neighbors in the feature space, the SMOTE algorithm creates artifactual samples. Smoothed bootstrapping is used by ROSE (random over-sampling examples) to create artificial samples from the neighborhood of the minority class in the feature space.
+
+Using the Smote technique, we can see that we have a total of 1376 not fraud transactions and 1032 fraud transactions
+
+
+```{r}
+set.seed(9568)
+smote_train <- SMOTE(Class ~ ., data  = train)
+
+table(smote_train$Class)
+```
+
+#USING THE ROSE FUNCTION
+#______________________________________________________
+using the ROSE function, we can see that we have a total of 99456 not fraud transaction and 99908 fraud transactions
+
+```{r}
+set.seed(9532)
+rose_train <- ROSE(Class ~ ., data  = train)$data 
+
+table(rose_train$Class)
+```
+
+#Random Forest Performance on the Under sample data
+
+using random forest for the under sampling sample and then make prediction
+
+```{r}
+
+x = down_train[, -30]
+y = down_train[,30]
+
+rf_fit <- Rborist(x, y, ntree = 1000, minNode = 20, maxLeaf = 13)
+
+
+rf_pred <- predict(rf_fit, test[,-30], ctgCensus = "prob")
+prob <- rf_pred$prob
+
+roc.curve(test$Class, prob[,2], plotit = TRUE)
+
+```
+
+
+
+#Random Forest Performance on the over sampling data
+
+using random forest for the over  sampling sample and then make prediction
+
+```{r}
+
+x = up_train[, -30]
+y = up_train[,30]
+
+rf_fit <- Rborist(x, y, ntree = 1000, minNode = 20, maxLeaf = 13)
+
+
+rf_pred <- predict(rf_fit, test[,-30], ctgCensus = "prob")
+prob <- rf_pred$prob
+
+roc.curve(test$Class, prob[,2], plotit = TRUE)
+
+```
+
+#Random Forest Performance on the SMOTE sample data
+
+using random forest for the SMOTE sampling sample and then make prediction
+
+```{r}
+
+x = smote_train[, -30]
+y = smote_train[,30]
+
+rf_fit <- Rborist(x, y, ntree = 1000, minNode = 20, maxLeaf = 13)
+
+
+rf_pred <- predict(rf_fit, test[,-30], ctgCensus = "prob")
+prob <- rf_pred$prob
+
+roc.curve(test$Class, prob[,2], plotit = TRUE)
+
+```
+
+#Random Forest Performance on the ROSE sample data
+
+using random forest for the ROSE sampling sample and then make prediction
+
+```{r}
+
+x = rose_train[, -30]
+y = rose_train[,30]
+
+rf_fit <- Rborist(x, y, ntree = 1000, minNode = 20, maxLeaf = 13)
+
+
+rf_pred <- predict(rf_fit, test[,-30], ctgCensus = "prob")
+prob <- rf_pred$prob
+
+roc.curve(test$Class, prob[,2], plotit = TRUE)
+
+```
+
+#SUMMARY OF THE WORK DONE
+#_____________________________
+#In this project, the main aim is to try to make our
+#imbalance dataset to be balance. 
+#dealing with imbalanced datasets like the fraud credit
+#cases is few compared to the instances of normal transactions.
+#We have argued why accuracy is not a appropriate measure of
+#model performance here and used the metric AREA UNDER ROC 
+#CURVE to evaluate how 
+#undersampling, the over sampling , the SMOTE and the ROSE  response variable can lead to better model
+#training.we applied different balancing techniques in this project. Using the Random forest to test each of the techniques,  We concluded that the smote technique works with an accuracy of 0.976.
+#well on the dataset and achieved significant improvement in
+#model performance over the imabalanced data.Random forest
+#model performed well with SMOTE balancing techniques. 
+
